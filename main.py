@@ -5,14 +5,15 @@ This server provides tools and resources for managing Clockodo time entries via 
 
 from logging_config import setup_logging
 
+# Configure logging first
+setup_logging()
+
+# Import server object at module level for MCP CLI compatibility
+from server import mcp
+
 
 def main():
     """Run the Clockodo MCP server."""
-    setup_logging()
-
-    # Import within function to ensure logging is configured before server modules load
-    from server import mcp
-
     mcp.run()
 
 
