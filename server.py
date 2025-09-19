@@ -4,6 +4,7 @@ Provides comprehensive integration with Clockodo API for time management.
 """
 
 import json
+import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
@@ -11,6 +12,9 @@ from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP, Context
 from clockodo_client import ClockodoClient, ClockodoAPIError
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -23,10 +27,12 @@ class AppContext:
 async def app_lifespan(server: FastMCP):
     """Manage application lifecycle with Clockodo client initialization."""
     try:
+        logger.info("Initializing ClockodoClient for application lifespan")
         clockodo = ClockodoClient()
+        logger.info("ClockodoClient initialized successfully")
         yield AppContext(clockodo=clockodo)
     except Exception as e:
-        print(f"Failed to initialize Clockodo client: {e}")
+        logger.exception("Failed to initialize Clockodo client")
         raise
 
 
@@ -52,12 +58,26 @@ async def start_time_tracking(
         description: Optional description text
     """
     try:
+        logger.info(
+            "start_time_tracking invoked",
+            extra={
+                "customer_name": customer_name,
+                "project_name": project_name,
+                "service_name": service_name
+            }
+        )
+
+        if ctx is None:
+            logger.error("Context missing in start_time_tracking")
+            return "❌ Unexpected error: request context unavailable"
+
         clockodo = ctx.request_context.lifespan_context.clockodo
 
         # Get customers to find ID
         customers = await clockodo.get_customers()
         customer = next((c for c in customers if customer_name.lower() in c["name"].lower()), None)
         if not customer:
+            logger.warning("Customer not found in start_time_tracking", extra={"customer_name": customer_name})
             return f"Customer '{customer_name}' not found. Available customers: {', '.join([c['name'] for c in customers[:5]])}"
 
         customers_id = customer["id"]
@@ -71,6 +91,10 @@ async def start_time_tracking(
             if project:
                 projects_id = project["id"]
             else:
+                logger.warning(
+                    "Project not found in start_time_tracking",
+                    extra={"customer_name": customer_name, "project_name": project_name}
+                )
                 return f"Project '{project_name}' not found for customer '{customer_name}'"
 
         # Find service if specified
@@ -80,6 +104,10 @@ async def start_time_tracking(
             if service:
                 services_id = service["id"]
             else:
+                logger.warning(
+                    "Service not found in start_time_tracking",
+                    extra={"service_name": service_name}
+                )
                 return f"Service '{service_name}' not found"
 
         # Start tracking
@@ -90,13 +118,24 @@ async def start_time_tracking(
             text=description
         )
 
+        logger.info(
+            "Time tracking started",
+            extra={
+                "customer_id": customers_id,
+                "project_id": projects_id,
+                "service_id": services_id
+            }
+        )
+
         return f"✅ Time tracking started for {customer['name']}" + \
                (f" - {project_name}" if project_name else "") + \
                (f" ({service_name})" if service_name else "")
 
     except ClockodoAPIError as e:
+        logger.error("Clockodo API error while starting time tracking", exc_info=e)
         return f"❌ Error starting time tracking: {e}"
     except Exception as e:
+        logger.exception("Unexpected error in start_time_tracking")
         return f"❌ Unexpected error: {e}"
 
 
@@ -104,15 +143,23 @@ async def start_time_tracking(
 async def stop_time_tracking(ctx: Context = None) -> str:
     """Stop current time tracking."""
     try:
+        logger.info("stop_time_tracking invoked")
+
+        if ctx is None:
+            logger.error("Context missing in stop_time_tracking")
+            return "❌ Unexpected error: request context unavailable"
+
         clockodo = ctx.request_context.lifespan_context.clockodo
 
         # Check if there's a running entry
         running = await clockodo.get_clock()
         if not running:
+            logger.info("stop_time_tracking called with no running entry")
             return "⏹️ No time tracking currently running"
 
         # Stop the clock
         result = await clockodo.stop_clock()
+        logger.info("Time tracking stopped", extra={"customers_id": running.get("customers_id"), "projects_id": running.get("projects_id")})
 
         # Calculate duration
         if running and "time_since" in running:
@@ -125,8 +172,10 @@ async def stop_time_tracking(ctx: Context = None) -> str:
         return "⏹️ Time tracking stopped"
 
     except ClockodoAPIError as e:
+        logger.error("Clockodo API error while stopping time tracking", exc_info=e)
         return f"❌ Error stopping time tracking: {e}"
     except Exception as e:
+        logger.exception("Unexpected error in stop_time_tracking")
         return f"❌ Unexpected error: {e}"
 
 
@@ -134,10 +183,17 @@ async def stop_time_tracking(ctx: Context = None) -> str:
 async def get_running_entry(ctx: Context = None) -> str:
     """Get current running time entry."""
     try:
+        logger.info("get_running_entry invoked")
+
+        if ctx is None:
+            logger.error("Context missing in get_running_entry")
+            return "❌ Unexpected error: request context unavailable"
+
         clockodo = ctx.request_context.lifespan_context.clockodo
 
         running = await clockodo.get_clock()
         if not running:
+            logger.info("get_running_entry found no running clock")
             return "⏹️ No time tracking currently running"
 
         # Format running entry info
@@ -166,8 +222,10 @@ async def get_running_entry(ctx: Context = None) -> str:
         return info
 
     except ClockodoAPIError as e:
+        logger.error("Clockodo API error while retrieving running entry", exc_info=e)
         return f"❌ Error getting running entry: {e}"
     except Exception as e:
+        logger.exception("Unexpected error in get_running_entry")
         return f"❌ Unexpected error: {e}"
 
 
@@ -194,6 +252,20 @@ async def create_time_entry(
         description: Optional description
     """
     try:
+        logger.info(
+            "create_time_entry invoked",
+            extra={
+                "customer_name": customer_name,
+                "project_name": project_name,
+                "service_name": service_name,
+                "date": date_str
+            }
+        )
+
+        if ctx is None:
+            logger.error("Context missing in create_time_entry")
+            return "❌ Unexpected error: request context unavailable"
+
         clockodo = ctx.request_context.lifespan_context.clockodo
 
         # Parse and validate datetime
@@ -208,6 +280,7 @@ async def create_time_entry(
         customers = await clockodo.get_customers()
         customer = next((c for c in customers if customer_name.lower() in c["name"].lower()), None)
         if not customer:
+            logger.warning("Customer not found in create_time_entry", extra={"customer_name": customer_name})
             return f"Customer '{customer_name}' not found"
 
         customers_id = customer["id"]
@@ -238,6 +311,17 @@ async def create_time_entry(
             text=description
         )
 
+        logger.info(
+            "Time entry created",
+            extra={
+                "customers_id": customers_id,
+                "projects_id": projects_id,
+                "services_id": services_id,
+                "time_since": time_since,
+                "time_until": time_until
+            }
+        )
+
         # Calculate duration
         start = datetime.strptime(time_since, "%Y-%m-%d %H:%M:%S")
         end = datetime.strptime(time_until, "%Y-%m-%d %H:%M:%S")
@@ -246,10 +330,13 @@ async def create_time_entry(
         return f"✅ Time entry created: {customer['name']} ({duration:.2f}h on {date_str})"
 
     except ValueError as e:
+        logger.error("Invalid date/time format in create_time_entry", exc_info=e)
         return f"❌ Invalid date/time format: {e}"
     except ClockodoAPIError as e:
+        logger.error("Clockodo API error while creating time entry", exc_info=e)
         return f"❌ Error creating entry: {e}"
     except Exception as e:
+        logger.exception("Unexpected error in create_time_entry")
         return f"❌ Unexpected error: {e}"
 
 
@@ -258,6 +345,12 @@ async def create_time_entry(
 async def get_time_entries(period: str, ctx: Context = None) -> str:
     """Get time entries for a period (today, yesterday, week, month)."""
     try:
+        logger.info("get_time_entries invoked", extra={"period": period})
+
+        if ctx is None:
+            logger.error("Context missing in get_time_entries")
+            return "❌ Unexpected error: request context unavailable"
+
         clockodo = ctx.request_context.lifespan_context.clockodo
 
         # Calculate date range based on period
@@ -284,11 +377,13 @@ async def get_time_entries(period: str, ctx: Context = None) -> str:
             time_since = clockodo.format_date(first_day)
             time_until = clockodo.format_date_end(last_day)
         else:
+            logger.warning("Invalid period requested in get_time_entries", extra={"period": period})
             return f"Invalid period '{period}'. Use: today, yesterday, week, month"
 
         entries = await clockodo.get_entries(time_since, time_until)
 
         if not entries:
+            logger.info("No entries found for period", extra={"period": period})
             return f"No time entries found for {period}"
 
         # Get current user ID and filter entries
@@ -296,6 +391,7 @@ async def get_time_entries(period: str, ctx: Context = None) -> str:
         user_entries = [entry for entry in entries if entry.get("users_id") == current_user_id]
 
         if not user_entries:
+            logger.info("No entries for current user", extra={"period": period, "user_id": current_user_id})
             return f"No time entries found for your user for {period}"
 
         # Format entries
@@ -332,8 +428,10 @@ async def get_time_entries(period: str, ctx: Context = None) -> str:
         return result
 
     except ClockodoAPIError as e:
+        logger.error("Clockodo API error while getting entries", exc_info=e)
         return f"❌ Error getting entries: {e}"
     except Exception as e:
+        logger.exception("Unexpected error in get_time_entries")
         return f"❌ Unexpected error: {e}"
 
 
@@ -341,10 +439,17 @@ async def get_time_entries(period: str, ctx: Context = None) -> str:
 async def get_all_customers(ctx: Context = None) -> str:
     """Get all customers."""
     try:
+        logger.info("get_all_customers invoked")
+
+        if ctx is None:
+            logger.error("Context missing in get_all_customers")
+            return "❌ Unexpected error: request context unavailable"
+
         clockodo = ctx.request_context.lifespan_context.clockodo
         customers = await clockodo.get_customers()
 
         if not customers:
+            logger.info("No customers found via API")
             return "No customers found"
 
         result = "👥 Customers:\n\n"
@@ -354,8 +459,10 @@ async def get_all_customers(ctx: Context = None) -> str:
         return result
 
     except ClockodoAPIError as e:
+        logger.error("Clockodo API error while getting customers", exc_info=e)
         return f"❌ Error getting customers: {e}"
     except Exception as e:
+        logger.exception("Unexpected error in get_all_customers")
         return f"❌ Unexpected error: {e}"
 
 
@@ -363,17 +470,25 @@ async def get_all_customers(ctx: Context = None) -> str:
 async def get_customer_projects(customer_name: str, ctx: Context = None) -> str:
     """Get projects for a specific customer."""
     try:
+        logger.info("get_customer_projects invoked", extra={"customer_name": customer_name})
+
+        if ctx is None:
+            logger.error("Context missing in get_customer_projects")
+            return "❌ Unexpected error: request context unavailable"
+
         clockodo = ctx.request_context.lifespan_context.clockodo
 
         # Find customer
         customers = await clockodo.get_customers()
         customer = next((c for c in customers if customer_name.lower() in c["name"].lower()), None)
         if not customer:
+            logger.warning("Customer not found in get_customer_projects", extra={"customer_name": customer_name})
             return f"Customer '{customer_name}' not found"
 
         projects = await clockodo.get_projects(customer["id"])
 
         if not projects:
+            logger.info("No projects found for customer", extra={"customer_id": customer["id"]})
             return f"No projects found for {customer['name']}"
 
         result = f"📁 Projects for {customer['name']}:\n\n"
@@ -383,8 +498,10 @@ async def get_customer_projects(customer_name: str, ctx: Context = None) -> str:
         return result
 
     except ClockodoAPIError as e:
+        logger.error("Clockodo API error while getting customer projects", exc_info=e)
         return f"❌ Error getting projects: {e}"
     except Exception as e:
+        logger.exception("Unexpected error in get_customer_projects")
         return f"❌ Unexpected error: {e}"
 
 
@@ -392,10 +509,17 @@ async def get_customer_projects(customer_name: str, ctx: Context = None) -> str:
 async def get_all_services(ctx: Context = None) -> str:
     """Get all services."""
     try:
+        logger.info("get_all_services invoked")
+
+        if ctx is None:
+            logger.error("Context missing in get_all_services")
+            return "❌ Unexpected error: request context unavailable"
+
         clockodo = ctx.request_context.lifespan_context.clockodo
         services = await clockodo.get_services()
 
         if not services:
+            logger.info("No services found via API")
             return "No services found"
 
         result = "🔧 Services:\n\n"
@@ -405,8 +529,10 @@ async def get_all_services(ctx: Context = None) -> str:
         return result
 
     except ClockodoAPIError as e:
+        logger.error("Clockodo API error while getting services", exc_info=e)
         return f"❌ Error getting services: {e}"
     except Exception as e:
+        logger.exception("Unexpected error in get_all_services")
         return f"❌ Unexpected error: {e}"
 
 

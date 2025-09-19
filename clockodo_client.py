@@ -4,6 +4,7 @@ Provides async HTTP client for Clockodo REST API with authentication.
 """
 
 import os
+import logging
 from datetime import datetime, date
 from typing import Optional, Dict, List, Any
 import httpx
@@ -16,6 +17,9 @@ load_dotenv()
 class ClockodoAPIError(Exception):
     """Custom exception for Clockodo API errors."""
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 class ClockodoClient:
@@ -37,14 +41,33 @@ class ClockodoClient:
             "Content-Type": "application/json"
         }
 
+        logger.info("ClockodoClient initialized", extra={"clockodo_email": self.email})
+
     async def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         """Make authenticated request to Clockodo API."""
         url = f"{self.base_url}{endpoint}"
 
         async with httpx.AsyncClient() as client:
             try:
+                logger.debug(
+                    "Sending request to Clockodo",
+                    extra={
+                        "method": method,
+                        "endpoint": endpoint,
+                        "has_params": "params" in kwargs,
+                        "has_json": "json" in kwargs
+                    }
+                )
                 response = await client.request(
                     method, url, headers=self.headers, **kwargs
+                )
+                logger.debug(
+                    "Received response from Clockodo",
+                    extra={
+                        "status_code": response.status_code,
+                        "method": method,
+                        "endpoint": endpoint
+                    }
                 )
                 response.raise_for_status()
                 return response.json()
@@ -55,8 +78,24 @@ class ClockodoClient:
                     error_detail = error_data.get("message", str(e))
                 except:
                     error_detail = str(e)
+                logger.error(
+                    "Clockodo API returned error",
+                    extra={
+                        "status_code": e.response.status_code,
+                        "method": method,
+                        "endpoint": endpoint,
+                        "error_detail": error_detail
+                    }
+                )
                 raise ClockodoAPIError(f"API Error {e.response.status_code}: {error_detail}")
             except Exception as e:
+                logger.exception(
+                    "Unexpected error while calling Clockodo",
+                    extra={
+                        "method": method,
+                        "endpoint": endpoint
+                    }
+                )
                 raise ClockodoAPIError(f"Request failed: {str(e)}")
 
     # Clock/Timer operations
@@ -170,6 +209,7 @@ class ClockodoClient:
         users = await self.get_users()
         current_user = next((user for user in users if user["email"] == self.email), None)
         if not current_user:
+            logger.error("Current Clockodo user not found", extra={"clockodo_email": self.email})
             raise ValueError(f"User with email {self.email} not found")
         return current_user["id"]
 
