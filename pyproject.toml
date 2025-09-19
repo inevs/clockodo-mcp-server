@@ -1,0 +1,11 @@
+[project]
+name = "clockodo-mcp-server"
+version = "0.1.0"
+description = "MCP Server for Clockodo API integration with Claude Desktop"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mcp[cli]>=1.14.1",
+    "httpx>=0.24.0",
+    "python-dotenv>=1.0.0",
+]
